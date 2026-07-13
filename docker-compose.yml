@@ -1,0 +1,39 @@
+services:
+  web:
+    build: ./app
+    environment:
+      - TZ=UTC
+      - DB_PATH=/data/fuusho.sqlite3
+      # LAN/public address the pairing QR points the app at — the
+      # container only knows its own internal host. Set this to wherever
+      # you'll actually reach this server from your phone.
+      - PUBLIC_SERVER_URL=${PUBLIC_SERVER_URL:-http://localhost:8090}
+      # --- APNs (E2E-encrypted push, the only delivery channel) ---
+      # All unset = APNs disabled = no delivery. Run `python init.py` to
+      # fill these in interactively.
+      - APNS_KEY_PATH=${APNS_KEY_PATH:-}
+      - APNS_KEY_ID=${APNS_KEY_ID:-}
+      - APNS_TEAM_ID=${APNS_TEAM_ID:-}
+      - APNS_BUNDLE_ID=${APNS_BUNDLE_ID:-}
+      # Legacy default only: devices report their own APNs environment at
+      # pairing (Xcode installs = development, TestFlight/App Store =
+      # production) and are routed per-device. This value covers devices
+      # that registered before the app reported one.
+      - APNS_USE_SANDBOX=${APNS_USE_SANDBOX:-true}
+      # Optional second signing key for the production gateway — needed if
+      # your main key is Sandbox-scoped (a Sandbox key cannot sign for
+      # production). Omit if the main key is All-scoped.
+      - APNS_PRODUCTION_KEY_PATH=${APNS_PRODUCTION_KEY_PATH:-}
+      - APNS_PRODUCTION_KEY_ID=${APNS_PRODUCTION_KEY_ID:-}
+      # Optional: gates POST /api/notify so only your own scripts/CI can
+      # trigger a push. Leave unset on a trusted LAN.
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
+    volumes:
+      - fuusho-data:/data
+      - ./secrets:/secrets:ro
+    ports:
+      - "8090:5000"
+    restart: unless-stopped
+
+volumes:
+  fuusho-data:

@@ -1,0 +1,10 @@
+flask==3.0.3
+gunicorn==22.0.0
+# APNs direct sending with E2E-encrypted payloads (backend/apns_client.py)
+httpx[http2]==0.27.2
+PyJWT==2.9.0
+cryptography==43.0.1
+# QR rendering for device pairing (backend/pairing.py)
+qrcode[pil]==7.4.2
+# Optional ntfy secondary channel (backend/ntfy_client.py)
+requests==2.32.3
