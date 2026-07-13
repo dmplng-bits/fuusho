@@ -1,0 +1,42 @@
+# Fly.io deployment for fuusho.
+#
+#   fly launch --no-deploy          # once; say yes to copying this config
+#   fly volumes create fuusho_data --size 1
+#   fly secrets set APNS_KEY_ID=... APNS_TEAM_ID=... APNS_BUNDLE_ID=... \
+#       PUBLIC_SERVER_URL=https://<your-app>.fly.dev INTERNAL_API_SECRET=...
+#   fly secrets set APNS_KEY_PEM="$(cat AuthKey_XXXXXXXXXX.p8)"   # see below
+#   fly deploy
+#
+# The .p8 can't be bind-mounted on Fly; ship it as a secret and write it
+# out at boot (see [processes] — the shell writes APNS_KEY_PEM to /data).
+# Keep exactly ONE machine: state is SQLite on the volume.
+
+app = "fuusho"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "app/Dockerfile"
+
+[env]
+  DB_PATH = "/data/fuusho.sqlite3"
+  APNS_KEY_PATH = "/data/apns-key.p8"
+
+[processes]
+  web = "sh -c 'if [ -n \"$APNS_KEY_PEM\" ]; then printf %s \"$APNS_KEY_PEM\" > /data/apns-key.p8; chmod 400 /data/apns-key.p8; fi; exec gunicorn -b 0.0.0.0:5000 --workers 3 --timeout 60 server:flask_app'"
+
+[[mounts]]
+  source = "fuusho_data"
+  destination = "/data"
+  processes = ["web"]
+
+[http_service]
+  internal_port = 5000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["web"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

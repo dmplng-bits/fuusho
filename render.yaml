@@ -1,0 +1,37 @@
+# Render.com blueprint for fuusho.
+#
+# "New +" -> Blueprint -> point at this repo. Then in the service's
+# Environment tab set the APNS_* values and paste the .p8 contents into
+# APNS_KEY_PEM (a Secret File named apns-key.p8 mounted at /etc/secrets
+# also works — then set APNS_KEY_PATH=/etc/secrets/apns-key.p8 instead).
+# Keep the instance count at 1: state is SQLite on the attached disk.
+
+services:
+  - type: web
+    name: fuusho
+    runtime: docker
+    dockerfilePath: app/Dockerfile
+    dockerContext: .
+    plan: starter
+    numInstances: 1
+    healthCheckPath: /healthz
+    disk:
+      name: fuusho-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /data/fuusho.sqlite3
+      - key: APNS_KEY_PATH
+        value: /data/apns-key.p8
+      - key: APNS_KEY_ID
+        sync: false
+      - key: APNS_TEAM_ID
+        sync: false
+      - key: APNS_BUNDLE_ID
+        sync: false
+      - key: PUBLIC_SERVER_URL
+        sync: false
+      - key: INTERNAL_API_SECRET
+        generateValue: true
+    preDeployCommand: sh -c 'if [ -n "$APNS_KEY_PEM" ]; then printf %s "$APNS_KEY_PEM" > /data/apns-key.p8 && chmod 400 /data/apns-key.p8; fi'

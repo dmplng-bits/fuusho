@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fuusho"
+version = "1.1.0"
+description = "Self-hosted, end-to-end-encrypted push notifications for your own iOS app — QR pairing, per-device keys, direct APNs"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "httpx[http2]>=0.27",
+    "PyJWT>=2.9",
+    "cryptography>=43.0",
+    "qrcode[pil]>=7.4",
+]
+
+[project.optional-dependencies]
+server = ["gunicorn>=22.0"]
+
+[tool.setuptools]
+packages = ["fuusho"]
