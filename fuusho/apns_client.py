@@ -71,6 +71,19 @@ PROVIDER_TOKEN_REFRESH_SECONDS = 50 * 60  # APNs allows 1h; refresh early
 AES_GCM_NONCE_LENGTH_BYTES = 12
 DEVICE_KEY_LENGTH_BYTES = 32
 
+# APNs statuses/reasons that mean this token will never work again (app
+# uninstalled, or the token was reissued by a reinstall/rebuild) — the
+# caller should stop retrying and remove the device record, not just log
+# a failure forever. https://developer.apple.com/documentation/usernotifications/handling-notification-responses-from-apns
+PERMANENT_FAILURE_REASONS_BY_STATUS = {
+    400: {"BadDeviceToken"},
+    410: {"Unregistered"},
+}
+
+
+class PermanentDeviceFailure(Exception):
+    """APNs told us this specific token is permanently dead."""
+
 
 def apns_is_configured():
     return all([APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID]) and os.path.exists(
@@ -172,5 +185,13 @@ def send_encrypted_notification(device, notification_title, notification_body):
                 "apns-priority": "10",
             },
         )
+    permanent_failure_reasons = PERMANENT_FAILURE_REASONS_BY_STATUS.get(response.status_code)
+    if permanent_failure_reasons:
+        try:
+            reason = response.json().get("reason", "")
+        except Exception:
+            reason = ""
+        if reason in permanent_failure_reasons:
+            raise PermanentDeviceFailure(f"{response.status_code} {reason}")
     response.raise_for_status()
     return response.headers.get("apns-id", "")

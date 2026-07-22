@@ -144,6 +144,58 @@ class TestProviderToken:
         assert apns_client.apns_is_configured() is False
 
 
+class TestPermanentDeviceFailureDetection:
+    """410 Unregistered / 400 BadDeviceToken mean this token will never
+    work again — the caller should stop retrying, not treat it like a
+    transient error (a rate limit, a network blip)."""
+
+    class FakeResponse:
+        def __init__(self, status_code, reason=None):
+            self.status_code = status_code
+            self._reason = reason
+            self.headers = {"apns-id": "test-apns-id"}
+
+        def json(self):
+            return {"reason": self._reason} if self._reason else {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"{self.status_code} error")
+
+    def _send_with_fake_response(self, monkeypatch, fake_response):
+        class FakeHttpClient:
+            def __init__(self, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc_info):
+                return False
+            def post(self, url, **kwargs):
+                return fake_response
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", FakeHttpClient)
+        monkeypatch.setattr(apns_client, "get_provider_token", lambda environment=None: "jwt")
+        device_key = apns_client.generate_device_encryption_key()
+        apns_client.send_encrypted_notification(
+            {"token": "aa" * 32, "encryptionKey": device_key}, "t", "b",
+        )
+
+    def test_410_unregistered_raises_permanent_failure(self, monkeypatch):
+        with pytest.raises(apns_client.PermanentDeviceFailure):
+            self._send_with_fake_response(monkeypatch, self.FakeResponse(410, "Unregistered"))
+
+    def test_400_bad_device_token_raises_permanent_failure(self, monkeypatch):
+        with pytest.raises(apns_client.PermanentDeviceFailure):
+            self._send_with_fake_response(monkeypatch, self.FakeResponse(400, "BadDeviceToken"))
+
+    def test_410_with_other_reason_is_not_treated_as_permanent(self, monkeypatch):
+        # Same status code, different reason — must not be misclassified.
+        with pytest.raises(Exception) as excinfo:
+            self._send_with_fake_response(monkeypatch, self.FakeResponse(410, "ExpiredProviderToken"))
+        assert not isinstance(excinfo.value, apns_client.PermanentDeviceFailure)
+
+
 # --------------------------------------------------- notification_dispatch
 
 class TestDispatchFanOut:
@@ -182,6 +234,39 @@ class TestDispatchFanOut:
     def test_apns_unconfigured_returns_false(self, monkeypatch):
         monkeypatch.setattr(notification_dispatch.apns_client, "apns_is_configured", lambda: False)
         assert notification_dispatch.dispatch_notification("t", "b") is False
+
+    def test_permanently_failed_device_is_pruned_from_state(self, monkeypatch):
+        key = apns_client.generate_device_encryption_key()
+        state_store.write_state("devices", [
+            {"token": "aa" * 32, "name": "dead phone", "encryptionKey": key},
+            {"token": "bb" * 32, "name": "live phone", "encryptionKey": key},
+        ])
+        monkeypatch.setattr(notification_dispatch.apns_client, "apns_is_configured", lambda: True)
+
+        def send_dead_for_first_device(device, title, body):
+            if device["name"] == "dead phone":
+                raise apns_client.PermanentDeviceFailure("410 Unregistered")
+        monkeypatch.setattr(
+            notification_dispatch.apns_client, "send_encrypted_notification",
+            send_dead_for_first_device,
+        )
+        assert notification_dispatch.dispatch_notification("t", "b") is True
+        remaining_devices = state_store.read_state("devices")
+        assert [device["name"] for device in remaining_devices] == ["live phone"]
+
+    def test_transient_failure_does_not_prune_the_device(self, monkeypatch):
+        key = apns_client.generate_device_encryption_key()
+        state_store.write_state("devices", [
+            {"token": "aa" * 32, "name": "flaky phone", "encryptionKey": key},
+        ])
+        monkeypatch.setattr(notification_dispatch.apns_client, "apns_is_configured", lambda: True)
+        monkeypatch.setattr(
+            notification_dispatch.apns_client, "send_encrypted_notification",
+            lambda device, title, body: (_ for _ in ()).throw(RuntimeError("network blip")),
+        )
+        assert notification_dispatch.dispatch_notification("t", "b") is False
+        remaining_devices = state_store.read_state("devices")
+        assert [device["name"] for device in remaining_devices] == ["flaky phone"]
 
 
 # ------------------------------------------------------------------ routes
@@ -344,6 +429,7 @@ class TestPerDeviceApnsEnvironment:
         requested_urls = []
 
         class FakeResponse:
+            status_code = 200
             headers = {"apns-id": "test-apns-id"}
             def raise_for_status(self):
                 pass

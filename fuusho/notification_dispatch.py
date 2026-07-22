@@ -22,16 +22,25 @@ def read_registered_devices():
 def dispatch_notification(notification_title, notification_body, notification_priority="default", notification_tags=""):
     delivered_anywhere = False
     failures = []
+    dead_device_tokens = []
 
     if apns_client.apns_is_configured():
-        for device in read_registered_devices():
+        devices = read_registered_devices()
+        for device in devices:
             try:
                 apns_client.send_encrypted_notification(
                     device, notification_title, notification_body
                 )
                 delivered_anywhere = True
+            except apns_client.PermanentDeviceFailure as apns_error:
+                failures.append(f"apns {device.get('name', device['token'][:8])}: {apns_error} — removing dead device")
+                dead_device_tokens.append(device["token"])
             except Exception as apns_error:
                 failures.append(f"apns {device.get('name', device['token'][:8])}: {apns_error}")
+
+        if dead_device_tokens:
+            remaining_devices = [d for d in devices if d["token"] not in dead_device_tokens]
+            state_store.write_state("devices", remaining_devices)
     else:
         failures.append("apns: not configured — no delivery channel available")
 
